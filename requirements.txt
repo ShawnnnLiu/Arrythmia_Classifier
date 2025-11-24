@@ -11,6 +11,9 @@ matplotlib>=3.7.0
 # Deep Learning Utilities
 tqdm>=4.65.0
 
+# PhysioNet Data Access
+wfdb>=4.1.0
+
 # Jupyter and Development
 jupyter>=1.0.0
 ipykernel>=6.25.0
