@@ -199,10 +199,11 @@ class BeatDataset(Dataset):
 
 
 def create_patient_splits(data_dir: str = 'data/mitdb',
-                         train_ratio: float = 0.7,
-                         val_ratio: float = 0.15,
-                         test_ratio: float = 0.15,
-                         random_seed: int = 42) -> Tuple[List[str], List[str], List[str]]:
+                         train_ratio: float = 0.75,
+                         val_ratio: float = 0.125,
+                         test_ratio: float = 0.125,
+                         random_seed: int = 42,
+                         stratified: bool = True) -> Tuple[List[str], List[str], List[str]]:
     """
     Create patient-wise train/val/test splits
     
@@ -221,6 +222,8 @@ def create_patient_splits(data_dir: str = 'data/mitdb',
         Fraction of patients for testing
     random_seed : int
         Random seed for reproducibility
+    stratified : bool
+        If True, attempts to balance class distribution across splits
         
     Returns:
     --------
@@ -238,19 +241,89 @@ def create_patient_splits(data_dir: str = 'data/mitdb',
     # Set random seed for reproducibility
     np.random.seed(random_seed)
     
-    # Shuffle records
-    records = np.array(all_records)
-    np.random.shuffle(records)
-    
-    # Calculate split points
-    n_records = len(records)
-    train_end = int(n_records * train_ratio)
-    val_end = train_end + int(n_records * val_ratio)
-    
-    # Split records
-    train_records = records[:train_end].tolist()
-    val_records = records[train_end:val_end].tolist()
-    test_records = records[val_end:].tolist()
+    if not stratified:
+        # Original simple random split
+        records = np.array(all_records)
+        np.random.shuffle(records)
+        
+        n_records = len(records)
+        train_end = int(n_records * train_ratio)
+        val_end = train_end + int(n_records * val_ratio)
+        
+        train_records = records[:train_end].tolist()
+        val_records = records[train_end:val_end].tolist()
+        test_records = records[val_end:].tolist()
+    else:
+        # Stratified split: analyze class distribution per record
+        print("\n  Analyzing class distribution per record for stratified split...")
+        
+        record_class_counts = {}
+        for record_name in all_records:
+            try:
+                record_path = os.path.join(data_dir, record_name)
+                annotation = wfdb.rdann(record_path, 'atr')
+                
+                # Count beats per class for this record
+                class_counts = Counter()
+                for symbol in annotation.symbol:
+                    if symbol in BEAT_CLASS_MAPPING:
+                        class_counts[BEAT_CLASS_MAPPING[symbol]] += 1
+                
+                record_class_counts[record_name] = class_counts
+            except Exception as e:
+                print(f"  Warning: Could not analyze record {record_name}: {e}")
+                record_class_counts[record_name] = Counter()
+        
+        # For stratification, prioritize records with rare classes
+        # Compute a "rarity score" for each record based on rare classes
+        rare_classes = [3, 5]  # Fusion and Unknown are typically rare
+        
+        records_with_rare = []
+        records_without_rare = []
+        
+        for record_name in all_records:
+            counts = record_class_counts[record_name]
+            has_rare = any(counts.get(cls, 0) > 0 for cls in rare_classes)
+            if has_rare:
+                records_with_rare.append(record_name)
+            else:
+                records_without_rare.append(record_name)
+        
+        # Shuffle both groups
+        np.random.shuffle(records_with_rare)
+        np.random.shuffle(records_without_rare)
+        
+        # Distribute rare-class records across splits
+        n_rare = len(records_with_rare)
+        rare_train_end = int(n_rare * train_ratio)
+        rare_val_end = rare_train_end + int(n_rare * val_ratio)
+        
+        rare_train = records_with_rare[:rare_train_end]
+        rare_val = records_with_rare[rare_train_end:rare_val_end]
+        rare_test = records_with_rare[rare_val_end:]
+        
+        # Distribute common-class records
+        n_common = len(records_without_rare)
+        common_train_end = int(n_common * train_ratio)
+        common_val_end = common_train_end + int(n_common * val_ratio)
+        
+        common_train = records_without_rare[:common_train_end]
+        common_val = records_without_rare[common_train_end:common_val_end]
+        common_test = records_without_rare[common_val_end:]
+        
+        # Combine and shuffle
+        train_records = rare_train + common_train
+        val_records = rare_val + common_val
+        test_records = rare_test + common_test
+        
+        np.random.shuffle(train_records)
+        np.random.shuffle(val_records)
+        np.random.shuffle(test_records)
+        
+        print(f"  Records with rare classes: {len(records_with_rare)}")
+        print(f"    Train: {len(rare_train)}, Val: {len(rare_val)}, Test: {len(rare_test)}")
+        print(f"  Records with common classes: {len(records_without_rare)}")
+        print(f"    Train: {len(common_train)}, Val: {len(common_val)}, Test: {len(common_test)}")
     
     print(f"\nPatient-wise split:")
     print(f"  Training:   {len(train_records)} records ({train_ratio*100:.0f}%)")
