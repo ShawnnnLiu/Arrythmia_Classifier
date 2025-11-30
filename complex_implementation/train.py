@@ -29,6 +29,7 @@ from dataset import (
 )
 from models_simple_cnn import SimpleBeatCNN
 from models_complex_cnn import ComplexBeatCNN
+from models_lstm_autoencoder import LSTMAutoencoderClassifier
 
 
 class FocalLoss(nn.Module):
@@ -87,16 +88,18 @@ class FocalLoss(nn.Module):
             return focal_loss
 
 
-def get_model(model_name: str, num_classes: int):
+def get_model(model_name: str, num_classes: int, seq_len: int = 288):
     """
     Get model by name
     
     Parameters:
     -----------
     model_name : str
-        Model name ('simple_cnn' or 'complex_cnn')
+        Model name ('simple_cnn', 'complex_cnn', or 'lstm_autoencoder')
     num_classes : int
         Number of output classes
+    seq_len : int
+        Sequence length (required for LSTM autoencoder)
         
     Returns:
     --------
@@ -107,13 +110,25 @@ def get_model(model_name: str, num_classes: int):
         return SimpleBeatCNN(num_classes=num_classes)
     elif model_name == 'complex_cnn':
         return ComplexBeatCNN(num_classes=num_classes)
+    elif model_name == 'lstm_autoencoder':
+        return LSTMAutoencoderClassifier(seq_len=seq_len, num_classes=num_classes)
     else:
-        raise ValueError(f"Unknown model: {model_name}. Choose 'simple_cnn' or 'complex_cnn'")
+        raise ValueError(f"Unknown model: {model_name}. Choose 'simple_cnn', 'complex_cnn', or 'lstm_autoencoder'")
 
 
-def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch):
+def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch, 
+                    is_autoencoder=False, alpha=1.0, beta=1.0):
     """
     Train for one epoch
+    
+    Parameters:
+    -----------
+    is_autoencoder : bool
+        If True, model is LSTM autoencoder with dual loss
+    alpha : float
+        Weight for reconstruction loss (autoencoder only)
+    beta : float
+        Weight for classification loss (autoencoder only)
     
     Returns:
     --------
@@ -124,6 +139,8 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch):
     """
     model.train()
     running_loss = 0.0
+    running_recon_loss = 0.0
+    running_class_loss = 0.0
     correct = 0
     total = 0
     
@@ -136,8 +153,22 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch):
         optimizer.zero_grad()
         
         # Forward pass
-        outputs = model(signals)
-        loss = criterion(outputs, labels)
+        if is_autoencoder:
+            # LSTM autoencoder returns (reconstruction, logits)
+            recon, logits = model(signals)
+            
+            # Compute dual loss
+            recon_loss = model.reconstruction_loss(recon, signals)
+            class_loss = model.classification_loss(logits, labels)
+            loss = alpha * recon_loss + beta * class_loss
+            
+            running_recon_loss += recon_loss.item()
+            running_class_loss += class_loss.item()
+            outputs = logits  # For accuracy computation
+        else:
+            # Regular CNN model
+            outputs = model(signals)
+            loss = criterion(outputs, labels)
         
         # Backward pass
         loss.backward()
@@ -151,19 +182,41 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch):
         
         # Print progress every 50 batches
         if (batch_idx + 1) % 50 == 0:
-            print(f"  Batch [{batch_idx+1}/{len(train_loader)}] "
-                  f"Loss: {loss.item():.4f} "
-                  f"Acc: {100.*correct/total:.2f}%")
+            if is_autoencoder:
+                print(f"  Batch [{batch_idx+1}/{len(train_loader)}] "
+                      f"Loss: {loss.item():.4f} "
+                      f"(Recon: {recon_loss.item():.4f}, Class: {class_loss.item():.4f}) "
+                      f"Acc: {100.*correct/total:.2f}%")
+            else:
+                print(f"  Batch [{batch_idx+1}/{len(train_loader)}] "
+                      f"Loss: {loss.item():.4f} "
+                      f"Acc: {100.*correct/total:.2f}%")
     
     avg_loss = running_loss / len(train_loader)
     accuracy = 100. * correct / total
     
+    # Return additional metrics for autoencoder
+    if is_autoencoder:
+        avg_recon_loss = running_recon_loss / len(train_loader)
+        avg_class_loss = running_class_loss / len(train_loader)
+        return avg_loss, accuracy, avg_recon_loss, avg_class_loss
+    
     return avg_loss, accuracy
 
 
-def evaluate(model, loader, criterion, device, split_name='Validation'):
+def evaluate(model, loader, criterion, device, split_name='Validation',
+             is_autoencoder=False, alpha=1.0, beta=1.0):
     """
     Evaluate model on a dataset
+    
+    Parameters:
+    -----------
+    is_autoencoder : bool
+        If True, model is LSTM autoencoder with dual loss
+    alpha : float
+        Weight for reconstruction loss (autoencoder only)
+    beta : float
+        Weight for classification loss (autoencoder only)
     
     Returns:
     --------
@@ -188,8 +241,20 @@ def evaluate(model, loader, criterion, device, split_name='Validation'):
             labels = labels.to(device)
             
             # Forward pass
-            outputs = model(signals)
-            loss = criterion(outputs, labels)
+            if is_autoencoder:
+                # LSTM autoencoder returns (reconstruction, logits)
+                recon, logits = model(signals)
+                
+                # Compute dual loss
+                recon_loss = model.reconstruction_loss(recon, signals)
+                class_loss = model.classification_loss(logits, labels)
+                loss = alpha * recon_loss + beta * class_loss
+                
+                outputs = logits  # For accuracy computation
+            else:
+                # Regular CNN model
+                outputs = model(signals)
+                loss = criterion(outputs, labels)
             
             # Statistics
             running_loss += loss.item()
@@ -554,12 +619,26 @@ def train(args):
         
         print("  Oversampling applied - minority classes will be sampled more frequently")
     
+    # Calculate sequence length for LSTM models
+    # MIT-BIH sampling rate is 360 Hz
+    sampling_rate = 360
+    seq_len = int(args.window_size * sampling_rate)
+    
     # Create model
     print(f"\nCreating model: {args.model}")
-    model = get_model(args.model, num_classes)
+    model = get_model(args.model, num_classes, seq_len=seq_len)
     model = model.to(device)
     
+    # Check if model is LSTM autoencoder
+    is_autoencoder = isinstance(model, LSTMAutoencoderClassifier)
+    
     print(f"Model has {model.get_num_params():,} trainable parameters")
+    if is_autoencoder:
+        print(f"Model type: LSTM Autoencoder (dual loss: reconstruction + classification)")
+        print(f"  Sequence length: {seq_len}")
+        print(f"  Latent dimension: {model.latent_dim}")
+        print(f"  Alpha (recon weight): {args.alpha}")
+        print(f"  Beta (class weight): {args.beta}")
     
     # Compute class weights for handling imbalanced data
     class_weights = None
@@ -663,13 +742,21 @@ def train(args):
         print("-" * 70)
         
         # Train
-        train_loss, train_acc = train_one_epoch(
-            model, train_loader, criterion, optimizer, device, epoch
-        )
+        if is_autoencoder:
+            train_loss, train_acc, train_recon_loss, train_class_loss = train_one_epoch(
+                model, train_loader, criterion, optimizer, device, epoch,
+                is_autoencoder=True, alpha=args.alpha, beta=args.beta
+            )
+        else:
+            train_loss, train_acc = train_one_epoch(
+                model, train_loader, criterion, optimizer, device, epoch
+            )
         
         # Evaluate on validation set
         val_loss, val_acc, val_preds, val_labels = evaluate(
-            model, val_loader, criterion, device, split_name='Validation'
+            model, val_loader, criterion, device, split_name='Validation',
+            is_autoencoder=is_autoencoder, alpha=args.alpha if is_autoencoder else 1.0,
+            beta=args.beta if is_autoencoder else 1.0
         )
         
         # Compute detailed metrics
@@ -677,7 +764,9 @@ def train(args):
         
         # Evaluate on TEST set (every epoch)
         test_loss, test_acc, test_preds, test_labels = evaluate(
-            model, test_loader, criterion, device, split_name='Test'
+            model, test_loader, criterion, device, split_name='Test',
+            is_autoencoder=is_autoencoder, alpha=args.alpha if is_autoencoder else 1.0,
+            beta=args.beta if is_autoencoder else 1.0
         )
         
         # Update learning rate
@@ -766,7 +855,9 @@ def train(args):
     
     print(f"Evaluating on test set ({len(test_records)} records)...")
     test_loss, test_acc, test_preds, test_labels = evaluate(
-        model, test_loader, criterion, device, split_name='Test'
+        model, test_loader, criterion, device, split_name='Test',
+        is_autoencoder=is_autoencoder, alpha=args.alpha if is_autoencoder else 1.0,
+        beta=args.beta if is_autoencoder else 1.0
     )
     
     test_metrics = compute_metrics(test_labels, test_preds, CLASS_NAMES)
@@ -952,8 +1043,12 @@ def main():
     
     # Model arguments
     parser.add_argument('--model', type=str, default='simple_cnn',
-                       choices=['simple_cnn', 'complex_cnn'],
+                       choices=['simple_cnn', 'complex_cnn', 'lstm_autoencoder'],
                        help='Model architecture to use')
+    parser.add_argument('--alpha', type=float, default=1.0,
+                       help='Weight for reconstruction loss (LSTM autoencoder only)')
+    parser.add_argument('--beta', type=float, default=1.0,
+                       help='Weight for classification loss (LSTM autoencoder only)')
     
     # Data arguments
     parser.add_argument('--data_dir', type=str, default='../data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0',

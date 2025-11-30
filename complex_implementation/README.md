@@ -25,6 +25,12 @@ The goal of Stage 1 is to classify individual heartbeats into different arrhythm
   - ~3.3M parameters, better feature extraction
   - Uses both average and max global pooling
 
+- **`models_lstm_autoencoder.py`**: LSTM autoencoder for beat classification
+  - `LSTMAutoencoderClassifier`: Combines reconstruction and classification
+  - ~1.5M parameters, learns temporal dependencies
+  - Dual loss: reconstruction (MSE) + classification (CrossEntropy)
+  - Inspired by Liu et al. 2022 (Biomed Signal Process Control)
+
 - **`train.py`**: Training script with full pipeline
   - Supports multiple model architectures
   - Patient-wise data splitting
@@ -63,9 +69,19 @@ Test the complex CNN model:
 python complex_implementation/models_complex_cnn.py
 ```
 
+Test the LSTM autoencoder model:
+```bash
+python complex_implementation/models_lstm_autoencoder.py
+```
+
 Test the dataset:
 ```bash
 python complex_implementation/dataset.py
+```
+
+Run LSTM autoencoder demo:
+```bash
+python complex_implementation/train_lstm_autoencoder_demo.py
 ```
 
 ### 2. Train a Model
@@ -78,6 +94,16 @@ python -m complex_implementation.train --model simple_cnn --epochs 50 --batch_si
 **Train Complex CNN (better performance):**
 ```bash
 python -m complex_implementation.train --model complex_cnn --epochs 50 --batch_size 32 --lr 0.0005
+```
+
+**Train LSTM Autoencoder (reconstruction + classification):**
+```bash
+python -m complex_implementation.train --model lstm_autoencoder --epochs 50 --batch_size 64 --alpha 1.0 --beta 1.0
+```
+
+**LSTM Autoencoder with curated patient split:**
+```bash
+python -m complex_implementation.train --model lstm_autoencoder --curated_test 207 217 --epochs 50 --class_weights
 ```
 
 **With custom parameters:**
@@ -97,7 +123,9 @@ python -m complex_implementation.train \
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--model` | `simple_cnn` | Model architecture (`simple_cnn` or `complex_cnn`) |
+| `--model` | `simple_cnn` | Model architecture (`simple_cnn`, `complex_cnn`, or `lstm_autoencoder`) |
+| `--alpha` | `1.0` | Reconstruction loss weight (LSTM autoencoder only) |
+| `--beta` | `1.0` | Classification loss weight (LSTM autoencoder only) |
 | `--data_dir` | `data/mitdb` | Directory containing MIT-BIH data |
 | `--window_size` | `0.8` | Window size around R-peak in seconds |
 | `--lead` | `0` | Which ECG lead to use (0 or 1) |
@@ -181,6 +209,17 @@ Epoch [1/50]
 - **Training time**: ~15-30 minutes per epoch (CPU)
 - **Use case**: Better performance, captures complex ECG morphology
 
+### LSTMAutoencoderClassifier (NEW)
+- **Parameters**: ~1.5M
+- **Architecture**: LSTM encoder → latent representation → LSTM decoder + classifier
+  - Encoder: 2-layer LSTM (hidden_size=128) + bottleneck (latent_dim=64)
+  - Decoder: 2-layer LSTM to reconstruct signal
+  - Classifier: MLP head for arrhythmia classification
+- **Loss**: Dual objective (α × reconstruction MSE + β × classification CE)
+- **Training time**: ~20-40 minutes per epoch (CPU, slower due to sequential LSTM)
+- **Use case**: Learning interpretable representations, anomaly detection, temporal modeling
+- **See**: `LSTM_AUTOENCODER_GUIDE.md` for detailed documentation
+
 ## Data Splits
 
 The implementation uses **patient-wise splitting** to ensure:
@@ -220,6 +259,32 @@ with torch.no_grad():
     predictions = model(input_tensor)
 ```
 
+## LSTM Autoencoder Model
+
+The LSTM autoencoder combines reconstruction and classification in a single model. This approach:
+- Learns meaningful latent representations of ECG morphology
+- Can detect anomalies via reconstruction error
+- Provides interpretability through signal reconstruction
+- Models temporal dependencies in ECG signals
+
+**Key files:**
+- `models_lstm_autoencoder.py` - Model implementation
+- `LSTM_AUTOENCODER_GUIDE.md` - Comprehensive guide and hyperparameter tuning
+- `train_lstm_autoencoder_demo.py` - Standalone demo with synthetic data
+
+**Quick start:**
+```bash
+# Basic training
+python train.py --model lstm_autoencoder --epochs 50
+
+# With class imbalance handling
+python train.py --model lstm_autoencoder --curated_test 207 217 --class_weights --oversample
+
+# Adjust loss weights
+python train.py --model lstm_autoencoder --alpha 2.0 --beta 1.0  # Emphasize reconstruction
+python train.py --model lstm_autoencoder --alpha 1.0 --beta 2.0  # Emphasize classification
+```
+
 ## Next Steps
 
 After Stage 1 (per-beat classification), possible extensions include:
@@ -229,6 +294,7 @@ After Stage 1 (per-beat classification), possible extensions include:
 - **Real-time inference**: Optimizing for low-latency prediction
 - **Data augmentation**: Adding noise, shifts, and scaling
 - **Transfer learning**: Pre-training on larger ECG datasets
+- **Reconstruction analysis**: Visualize LSTM autoencoder reconstructions for anomaly detection
 
 ## Tips for Better Performance
 
