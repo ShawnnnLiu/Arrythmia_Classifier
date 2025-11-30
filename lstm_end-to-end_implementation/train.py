@@ -31,7 +31,8 @@ from dataset import (
     create_dataloaders,
     CLASS_NAMES
 )
-# from models_lstm import LSTM
+
+# import LSTM model
 
 
 class FocalLoss(nn.Module):
@@ -58,16 +59,17 @@ class FocalLoss(nn.Module):
             return focal_loss
 
 
-def get_model(model_name: str, num_classes: int, **model_kwargs):
+def get_model(model_name: str, num_classes: int, **model_kwargs): # <-- switch to LSTM model
     """Get model by name"""
-    if model_name == 'simple_cnn':
-        return SimpleRhythmCNN(num_classes=num_classes, **model_kwargs)
-    elif model_name == 'complex_cnn':
-        return ComplexRhythmCNN(num_classes=num_classes, **model_kwargs)
-    elif model_name == 'complex_cnn_nolstm':
-        return ComplexRhythmCNN_NoLSTM(num_classes=num_classes, **model_kwargs)
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
+    # if model_name == 'simple_cnn':
+    #     return SimpleRhythmCNN(num_classes=num_classes, **model_kwargs)
+    # elif model_name == 'complex_cnn':
+    #     return ComplexRhythmCNN(num_classes=num_classes, **model_kwargs)
+    # elif model_name == 'complex_cnn_nolstm':
+    #     return ComplexRhythmCNN_NoLSTM(num_classes=num_classes, **model_kwargs)
+    # else:
+    #     raise ValueError(f"Unknown model: {model_name}")
+    pass
 
 
 def train_epoch(model, train_loader, criterion, optimizer, device, epoch, total_epochs):
