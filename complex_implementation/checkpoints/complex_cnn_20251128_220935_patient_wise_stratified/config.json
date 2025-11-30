@@ -1,0 +1,22 @@
+{
+  "model": "complex_cnn",
+  "data_dir": "../data/mitdb",
+  "window_size": 0.8,
+  "lead": 0,
+  "train_ratio": 0.75,
+  "val_ratio": 0.125,
+  "test_ratio": 0.125,
+  "stratified": true,
+  "epochs": 20,
+  "batch_size": 64,
+  "lr": 0.001,
+  "weight_decay": 1e-05,
+  "seed": 42,
+  "checkpoint_dir": "checkpoints",
+  "save_freq": 10,
+  "num_workers": 4,
+  "num_classes": 6,
+  "num_train_records": 36,
+  "num_val_records": 5,
+  "num_test_records": 7
+}

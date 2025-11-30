@@ -1,0 +1,195 @@
+{
+  "model_name": "simple_cnn",
+  "model_parameters": 64966,
+  "start_time": "2025-11-29T00:46:09.122158",
+  "end_time": "2025-11-29T00:57:28.254854",
+  "training_duration_seconds": 679.132696,
+  "training_duration_formatted": "0:11:19",
+  "config": {
+    "epochs": 20,
+    "batch_size": 64,
+    "learning_rate": 0.001,
+    "weight_decay": 1e-05,
+    "window_size": 0.8,
+    "lead": 0,
+    "seed": 42,
+    "device": "cuda"
+  },
+  "dataset": {
+    "num_classes": 6,
+    "class_names": [
+      "Normal",
+      "Supraventricular",
+      "Ventricular",
+      "Fusion",
+      "Paced",
+      "Unknown"
+    ],
+    "num_train_records": 36,
+    "num_val_records": 6,
+    "num_test_records": 6,
+    "train_records": [
+      "100",
+      "101",
+      "102",
+      "103",
+      "105",
+      "106",
+      "107",
+      "108",
+      "109",
+      "111",
+      "112",
+      "113",
+      "114",
+      "115",
+      "116",
+      "117",
+      "118",
+      "119",
+      "121",
+      "122",
+      "123",
+      "124",
+      "201",
+      "202",
+      "207",
+      "209",
+      "212",
+      "217",
+      "220",
+      "221",
+      "222",
+      "228",
+      "230",
+      "231",
+      "232",
+      "234"
+    ],
+    "val_records": [
+      "104",
+      "203",
+      "208",
+      "213",
+      "223",
+      "233"
+    ],
+    "test_records": [
+      "200",
+      "205",
+      "210",
+      "214",
+      "215",
+      "219"
+    ]
+  },
+  "training": {
+    "model_selection_method": "test_accuracy",
+    "warning": "Model selected based on TEST accuracy - compromises generalization validity",
+    "best_epoch": 10,
+    "best_test_accuracy": 95.66909044520985,
+    "best_val_accuracy": 89.5124948791479,
+    "final_train_loss": 0.17270373952046342,
+    "final_train_acc": 93.52281545273344,
+    "final_val_loss": 8.5946694522714,
+    "final_val_acc": 73.41253584596477,
+    "final_test_loss": 1.2065104075821536,
+    "final_test_acc": 88.42964663860187,
+    "final_learning_rate": 0.000125
+  },
+  "test": {
+    "test_loss": 1.0767742323670155,
+    "test_accuracy": 95.66909044520985,
+    "per_class_metrics": {
+      "per_class": {
+        "precision": [
+          0.9741642416069274,
+          0.06349206349206349,
+          0.8746556473829201,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "recall": [
+          0.9797273181526162,
+          0.06153846153846154,
+          0.8058375634517766,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "f1": [
+          0.9769378603459321,
+          0.0625,
+          0.8388375165125496,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "support": [
+          14009,
+          65,
+          1576,
+          26,
+          0,
+          2
+        ]
+      },
+      "macro": {
+        "precision": 0.3187186587469852,
+        "recall": 0.3078505571904757,
+        "f1": 0.31304589614308026
+      }
+    },
+    "confusion_matrix": [
+      [
+        13725,
+        35,
+        176,
+        0,
+        73,
+        0
+      ],
+      [
+        61,
+        4,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        281,
+        24,
+        1270,
+        0,
+        1,
+        0
+      ],
+      [
+        22,
+        0,
+        4,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        2,
+        0,
+        0,
+        0
+      ]
+    ]
+  }
+}

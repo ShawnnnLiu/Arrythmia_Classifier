@@ -1,0 +1,73 @@
+{
+  "model": "simple_cnn",
+  "data_dir": "../data/mitdb",
+  "window_size": 0.8,
+  "lead": 0,
+  "train_ratio": 0.75,
+  "val_ratio": 0.125,
+  "test_ratio": 0.125,
+  "stratified": false,
+  "beat_wise": false,
+  "curated_test": [
+    "104",
+    "201",
+    "202",
+    "203",
+    "214",
+    "233"
+  ],
+  "curated_val": [
+    "205",
+    "210",
+    "213",
+    "215",
+    "219",
+    "223"
+  ],
+  "class_weights": false,
+  "focal_loss": false,
+  "focal_gamma": 2.0,
+  "oversample": false,
+  "epochs": 20,
+  "batch_size": 64,
+  "lr": 0.001,
+  "weight_decay": 1e-05,
+  "seed": 42,
+  "checkpoint_dir": "checkpoints",
+  "save_freq": 10,
+  "num_workers": 4,
+  "num_classes": 6,
+  "num_train_records": 36,
+  "num_val_records": 6,
+  "num_test_records": 6,
+  "split_mode": "curated_patient_wise",
+  "test_records": [
+    "104",
+    "201",
+    "202",
+    "203",
+    "214",
+    "233"
+  ],
+  "train_records": [
+    "100",
+    "101",
+    "102",
+    "103",
+    "105",
+    "106",
+    "107",
+    "108",
+    "109",
+    "111",
+    "..."
+  ],
+  "val_records": [
+    "205",
+    "210",
+    "213",
+    "215",
+    "219",
+    "223"
+  ]
+}

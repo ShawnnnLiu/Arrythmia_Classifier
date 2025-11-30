@@ -10,6 +10,7 @@ import argparse
 import time
 import json
 from datetime import datetime
+from collections import Counter
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -21,12 +22,69 @@ from sklearn.metrics import classification_report, confusion_matrix, precision_r
 
 # Import models and dataset
 from dataset import (
-    create_patient_splits, 
+    create_patient_splits,
+    create_curated_hybrid_splits,
     create_dataloaders,
     CLASS_NAMES
 )
 from models_simple_cnn import SimpleBeatCNN
 from models_complex_cnn import ComplexBeatCNN
+
+
+class FocalLoss(nn.Module):
+    """
+    Focal Loss for addressing class imbalance
+    
+    Focal Loss focuses training on hard examples and down-weights
+    easy examples, helping the model learn rare classes better.
+    
+    Reference: Lin et al. "Focal Loss for Dense Object Detection" (2017)
+    """
+    
+    def __init__(self, gamma=2.0, alpha=None, reduction='mean'):
+        """
+        Parameters:
+        -----------
+        gamma : float
+            Focusing parameter (default: 2.0). Higher gamma focuses more on hard examples.
+        alpha : torch.Tensor or None
+            Class weights (optional). Shape: [num_classes]
+        reduction : str
+            'mean', 'sum', or 'none'
+        """
+        super(FocalLoss, self).__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+        self.reduction = reduction
+        
+    def forward(self, inputs, targets):
+        """
+        Parameters:
+        -----------
+        inputs : torch.Tensor
+            Predictions (logits) of shape [batch_size, num_classes]
+        targets : torch.Tensor
+            Ground truth labels of shape [batch_size]
+        """
+        # Compute cross entropy
+        ce_loss = nn.functional.cross_entropy(inputs, targets, reduction='none', weight=self.alpha)
+        
+        # Compute probabilities
+        probs = torch.softmax(inputs, dim=1)
+        probs_target = probs.gather(1, targets.unsqueeze(1)).squeeze(1)
+        
+        # Compute focal term: (1 - p_t)^gamma
+        focal_weight = (1 - probs_target) ** self.gamma
+        
+        # Compute focal loss
+        focal_loss = focal_weight * ce_loss
+        
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
 
 
 def get_model(model_name: str, num_classes: int):
@@ -240,18 +298,20 @@ def save_training_curves(training_history, save_dir, model_name):
     # Plot 1: Loss curves
     ax1.plot(epochs, training_history['train_loss'], 'b-', label='Training Loss', linewidth=2)
     ax1.plot(epochs, training_history['val_loss'], 'r-', label='Validation Loss', linewidth=2)
+    ax1.plot(epochs, training_history['test_loss'], 'g-', label='Test Loss', linewidth=2)
     ax1.set_xlabel('Epoch', fontsize=12)
     ax1.set_ylabel('Loss', fontsize=12)
-    ax1.set_title(f'{model_name} - Training and Validation Loss', fontsize=14, fontweight='bold')
+    ax1.set_title(f'{model_name} - Training/Val/Test Loss', fontsize=14, fontweight='bold')
     ax1.legend(fontsize=11)
     ax1.grid(True, alpha=0.3)
     
     # Plot 2: Accuracy curves
     ax2.plot(epochs, training_history['train_acc'], 'b-', label='Training Accuracy', linewidth=2)
     ax2.plot(epochs, training_history['val_acc'], 'r-', label='Validation Accuracy', linewidth=2)
+    ax2.plot(epochs, training_history['test_acc'], 'g-', label='Test Accuracy', linewidth=2)
     ax2.set_xlabel('Epoch', fontsize=12)
     ax2.set_ylabel('Accuracy (%)', fontsize=12)
-    ax2.set_title(f'{model_name} - Training and Validation Accuracy', fontsize=14, fontweight='bold')
+    ax2.set_title(f'{model_name} - Training/Val/Test Accuracy', fontsize=14, fontweight='bold')
     ax2.legend(fontsize=11)
     ax2.grid(True, alpha=0.3)
     
@@ -265,6 +325,7 @@ def save_training_curves(training_history, save_dir, model_name):
     plt.figure(figsize=(10, 6))
     plt.plot(epochs, training_history['train_loss'], 'b-', label='Training Loss', linewidth=2.5)
     plt.plot(epochs, training_history['val_loss'], 'r-', label='Validation Loss', linewidth=2.5)
+    plt.plot(epochs, training_history['test_loss'], 'g-', label='Test Loss', linewidth=2.5)
     plt.xlabel('Epoch', fontsize=14)
     plt.ylabel('Loss', fontsize=14)
     plt.title(f'{model_name} - Loss Curves', fontsize=16, fontweight='bold')
@@ -278,6 +339,7 @@ def save_training_curves(training_history, save_dir, model_name):
     plt.figure(figsize=(10, 6))
     plt.plot(epochs, training_history['train_acc'], 'b-', label='Training Accuracy', linewidth=2.5)
     plt.plot(epochs, training_history['val_acc'], 'r-', label='Validation Accuracy', linewidth=2.5)
+    plt.plot(epochs, training_history['test_acc'], 'g-', label='Test Accuracy', linewidth=2.5)
     plt.xlabel('Epoch', fontsize=14)
     plt.ylabel('Accuracy (%)', fontsize=14)
     plt.title(f'{model_name} - Accuracy Curves', fontsize=16, fontweight='bold')
@@ -363,22 +425,85 @@ def train(args):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(args.seed)
     
-    # Create patient-wise splits
-    print("\nCreating patient-wise train/val/test splits...")
-    if args.stratified:
-        print("Using stratified split (balances rare classes across splits)")
-    train_records, val_records, test_records = create_patient_splits(
-        data_dir=args.data_dir,
-        train_ratio=args.train_ratio,
-        val_ratio=args.val_ratio,
-        test_ratio=args.test_ratio,
-        random_seed=args.seed,
-        stratified=args.stratified
-    )
+    # Create train/val/test splits
+    # Determine which split strategy to use
+    if args.curated_val is not None and args.curated_test is not None:
+        # PURE PATIENT-WISE with manually specified val and test patients
+        print("\n" + "="*70)
+        print("CURATED PATIENT-WISE SPLIT")
+        print("="*70)
+        print(f"Validation patients (manually selected): {args.curated_val}")
+        print(f"Test patients (manually selected): {args.curated_test}")
+        print(f"\nStrategy: ✅ Pure patient-wise (no leakage, clinically valid)")
+        print("="*70 + "\n")
+        
+        from dataset import create_curated_patient_splits
+        train_records, val_records, test_records = create_curated_patient_splits(
+            data_dir=args.data_dir,
+            val_patients=args.curated_val,
+            test_patients=args.curated_test,
+            random_seed=args.seed
+        )
+        use_beat_wise = False
+    elif args.curated_test is not None:
+        # HYBRID: Curated test (patient-wise) + beat-pooled train/val
+        print("\nCreating CURATED HYBRID split...")
+        train_records, val_records, test_records = create_curated_hybrid_splits(
+            data_dir=args.data_dir,
+            test_patients=args.curated_test,
+            train_ratio=args.train_ratio / (args.train_ratio + args.val_ratio),  # Normalize to sum to 1
+            val_ratio=args.val_ratio / (args.train_ratio + args.val_ratio),
+            random_seed=args.seed
+        )
+        # For hybrid mode, we need to enable beat_wise_split for train/val
+        use_beat_wise = True
+    elif args.beat_wise:
+        # BEAT-WISE: All splits use beat pooling (DATA LEAKAGE!)
+        print("\nWARNING: Creating BEAT-WISE split (NOT patient-wise)...")
+        train_records, val_records, test_records = create_patient_splits(
+            data_dir=args.data_dir,
+            train_ratio=args.train_ratio,
+            val_ratio=args.val_ratio,
+            test_ratio=args.test_ratio,
+            random_seed=args.seed,
+            stratified=args.stratified,
+            beat_wise=True
+        )
+        use_beat_wise = True
+    else:
+        # PATIENT-WISE: Pure patient-wise split (clinically valid)
+        print("\nCreating patient-wise train/val/test splits...")
+        if args.stratified:
+            print("Using stratified split (balances rare classes across splits)")
+        train_records, val_records, test_records = create_patient_splits(
+            data_dir=args.data_dir,
+            train_ratio=args.train_ratio,
+            val_ratio=args.val_ratio,
+            test_ratio=args.test_ratio,
+            random_seed=args.seed,
+            stratified=args.stratified,
+            beat_wise=False
+        )
+        use_beat_wise = False
     
     # Create dataloaders
     print("\nLoading data...")
-    train_loader, val_loader, test_loader, num_classes = create_dataloaders(
+    
+    # Determine if we're in hybrid mode (ONLY curated_test, not both)
+    is_hybrid_mode = (args.curated_test is not None and args.curated_val is None)
+    
+    # For hybrid mode, adjust the train/val ratios (test is patient-wise so doesn't use these)
+    if is_hybrid_mode:
+        # Normalize train/val ratios to sum to 1 (since test is separate patients)
+        total_train_val = args.train_ratio + args.val_ratio
+        dataloader_train_ratio = args.train_ratio / total_train_val
+        dataloader_val_ratio = args.val_ratio / total_train_val
+    else:
+        # Use original ratios (for pure patient-wise, these won't be used anyway)
+        dataloader_train_ratio = args.train_ratio
+        dataloader_val_ratio = args.val_ratio
+    
+    train_loader, val_loader, test_loader, num_classes, train_dataset = create_dataloaders(
         train_records=train_records,
         val_records=val_records,
         test_records=test_records,
@@ -386,8 +511,48 @@ def train(args):
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         window_size=args.window_size,
-        lead=args.lead
+        lead=args.lead,
+        return_train_dataset=True,
+        beat_wise_split=use_beat_wise,
+        hybrid_mode=is_hybrid_mode,
+        train_ratio=dataloader_train_ratio,
+        val_ratio=dataloader_val_ratio,
+        random_seed=args.seed
     )
+    
+    # Apply oversampling if requested
+    if args.oversample:
+        from torch.utils.data import WeightedRandomSampler
+        
+        print("\nApplying oversampling to balance training data...")
+        
+        # Count samples per class
+        class_counts = Counter(train_dataset.labels)
+        total_samples = len(train_dataset)
+        
+        # Compute sample weights (inverse frequency)
+        sample_weights = []
+        for label in train_dataset.labels:
+            weight = 1.0 / class_counts[label]
+            sample_weights.append(weight)
+        
+        # Create weighted sampler
+        sampler = WeightedRandomSampler(
+            weights=sample_weights,
+            num_samples=len(sample_weights),
+            replacement=True
+        )
+        
+        # Recreate train_loader with sampler
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=args.batch_size,
+            sampler=sampler,
+            num_workers=args.num_workers,
+            pin_memory=True
+        )
+        
+        print("  Oversampling applied - minority classes will be sampled more frequently")
     
     # Create model
     print(f"\nCreating model: {args.model}")
@@ -396,8 +561,42 @@ def train(args):
     
     print(f"Model has {model.get_num_params():,} trainable parameters")
     
+    # Compute class weights for handling imbalanced data
+    class_weights = None
+    if args.class_weights:
+        print("\nComputing class weights from training data...")
+        # Count samples per class in training set
+        train_class_counts = {}
+        for signals, labels in train_loader:
+            for label in labels:
+                label_id = label.item()
+                train_class_counts[label_id] = train_class_counts.get(label_id, 0) + 1
+        
+        # Compute inverse frequency weights
+        total_samples = sum(train_class_counts.values())
+        weights = []
+        for class_id in range(num_classes):
+            count = train_class_counts.get(class_id, 1)  # Avoid division by zero
+            weight = total_samples / (num_classes * count)
+            weights.append(weight)
+        
+        class_weights = torch.FloatTensor(weights).to(device)
+        
+        print("  Class weights:")
+        for class_id, class_name in enumerate(CLASS_NAMES):
+            count = train_class_counts.get(class_id, 0)
+            weight = weights[class_id]
+            print(f"    {class_name:<20} Count: {count:>6,} Weight: {weight:>8.4f}")
+    
     # Loss function and optimizer
-    criterion = nn.CrossEntropyLoss()
+    if args.focal_loss:
+        print(f"\nUsing Focal Loss (gamma={args.focal_gamma}, alpha=class_weights)")
+        criterion = FocalLoss(gamma=args.focal_gamma, alpha=class_weights)
+    else:
+        criterion = nn.CrossEntropyLoss(weight=class_weights)
+        if class_weights is not None:
+            print("\nUsing weighted CrossEntropyLoss")
+    
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     
     # Learning rate scheduler
@@ -405,9 +604,24 @@ def train(args):
         optimizer, mode='max', factor=0.5, patience=5
     )
     
-    # Create checkpoint directory
+    # Create checkpoint directory with split mode indicator
+    split_mode = ""
+    if args.curated_val is not None and args.curated_test is not None:
+        split_mode = "_curated_patient_wise"
+    elif args.curated_test is not None:
+        split_mode = "_curated_hybrid"
+    elif args.beat_wise:
+        if args.stratified:
+            split_mode = "_beat_wise_stratified"
+        else:
+            split_mode = "_beat_wise"
+    elif args.stratified:
+        split_mode = "_patient_wise_stratified"
+    else:
+        split_mode = "_patient_wise"
+    
     checkpoint_dir = os.path.join(args.checkpoint_dir, 
-                                  f"{args.model}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+                                  f"{args.model}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{split_mode}")
     os.makedirs(checkpoint_dir, exist_ok=True)
     print(f"Checkpoints will be saved to: {checkpoint_dir}")
     
@@ -417,8 +631,12 @@ def train(args):
     config['num_train_records'] = len(train_records)
     config['num_val_records'] = len(val_records)
     config['num_test_records'] = len(test_records)
+    config['split_mode'] = split_mode.strip('_')  # Remove leading underscore
+    config['test_records'] = test_records
+    config['train_records'] = train_records[:10] if len(train_records) <= 10 else train_records[:10] + ['...']
+    config['val_records'] = val_records[:10] if len(val_records) <= 10 else val_records[:10] + ['...']
     
-    with open(os.path.join(checkpoint_dir, 'config.json'), 'w') as f:
+    with open(os.path.join(checkpoint_dir, 'config.json'), 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2)
     
     # Training loop
@@ -433,6 +651,8 @@ def train(args):
         'train_acc': [],
         'val_loss': [],
         'val_acc': [],
+        'test_loss': [],
+        'test_acc': [],
         'learning_rate': []
     }
     
@@ -455,6 +675,11 @@ def train(args):
         # Compute detailed metrics
         val_metrics = compute_metrics(val_labels, val_preds, CLASS_NAMES)
         
+        # Evaluate on TEST set (every epoch)
+        test_loss, test_acc, test_preds, test_labels = evaluate(
+            model, test_loader, criterion, device, split_name='Test'
+        )
+        
         # Update learning rate
         scheduler.step(val_acc)
         current_lr = optimizer.param_groups[0]['lr']
@@ -464,6 +689,7 @@ def train(args):
         print(f"\n  Summary:")
         print(f"    Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
         print(f"    Val Loss:   {val_loss:.4f} | Val Acc:   {val_acc:.2f}%")
+        print(f"    Test Loss:  {test_loss:.4f} | Test Acc:  {test_acc:.2f}%")
         print(f"    Learning Rate: {current_lr:.6f}")
         print(f"    Epoch Time: {epoch_time:.2f}s")
         
@@ -475,12 +701,15 @@ def train(args):
         training_history['train_acc'].append(train_acc)
         training_history['val_loss'].append(val_loss)
         training_history['val_acc'].append(val_acc)
+        training_history['test_loss'].append(test_loss)
+        training_history['test_acc'].append(test_acc)
         training_history['learning_rate'].append(current_lr)
         
-        # Save best model
+        # Save best model based on validation accuracy (industry standard)
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             best_epoch = epoch
+            print(f"    ⭐ New best validation accuracy! Saving model...")
             save_checkpoint(
                 model, optimizer, epoch, best_val_acc,
                 os.path.join(checkpoint_dir, 'best_model.pth')
@@ -501,7 +730,7 @@ def train(args):
     duration_str = str(training_duration).split('.')[0]  # Remove microseconds
     
     # Save training history (JSON)
-    with open(os.path.join(checkpoint_dir, 'training_history.json'), 'w') as f:
+    with open(os.path.join(checkpoint_dir, 'training_history.json'), 'w', encoding='utf-8') as f:
         json.dump(training_history, f, indent=2)
     
     # Save training history (CSV for easy plotting)
@@ -511,9 +740,11 @@ def train(args):
         'train_acc': training_history['train_acc'],
         'val_loss': training_history['val_loss'],
         'val_acc': training_history['val_acc'],
+        'test_loss': training_history['test_loss'],
+        'test_acc': training_history['test_acc'],
         'learning_rate': training_history['learning_rate']
     })
-    history_df.to_csv(os.path.join(checkpoint_dir, 'training_history.csv'), index=False)
+    history_df.to_csv(os.path.join(checkpoint_dir, 'training_history.csv'), index=False, encoding='utf-8')
     
     print("\n" + "="*70)
     print("Training completed!")
@@ -527,7 +758,7 @@ def train(args):
     
     # Load best model and evaluate on test set
     print("\n" + "="*70)
-    print("FINAL TEST EVALUATION (using best model from training)")
+    print("FINAL TEST EVALUATION (using best validation model)")
     print("="*70)
     print(f"Loading best model checkpoint (Epoch {best_epoch}, Val Acc: {best_val_acc:.2f}%)...")
     checkpoint = torch.load(os.path.join(checkpoint_dir, 'best_model.pth'), weights_only=False)
@@ -597,12 +828,15 @@ def train(args):
         
         # Training results
         'training': {
+            'model_selection_method': 'validation_accuracy',
             'best_epoch': int(best_epoch),
             'best_val_accuracy': float(best_val_acc),
             'final_train_loss': float(training_history['train_loss'][-1]),
             'final_train_acc': float(training_history['train_acc'][-1]),
             'final_val_loss': float(training_history['val_loss'][-1]),
             'final_val_acc': float(training_history['val_acc'][-1]),
+            'final_test_loss': float(training_history['test_loss'][-1]),
+            'final_test_acc': float(training_history['test_acc'][-1]),
             'final_learning_rate': float(training_history['learning_rate'][-1])
         },
         
@@ -616,7 +850,7 @@ def train(args):
     }
     
     # Save comprehensive summary
-    with open(os.path.join(checkpoint_dir, 'results_summary.json'), 'w') as f:
+    with open(os.path.join(checkpoint_dir, 'results_summary.json'), 'w', encoding='utf-8') as f:
         json.dump(results_summary, f, indent=2)
     
     # Save per-class metrics to CSV for easy comparison
@@ -628,10 +862,10 @@ def train(args):
         'f1_score': test_metrics['per_class']['f1'],
         'support': test_metrics['per_class']['support']
     })
-    per_class_df.to_csv(os.path.join(checkpoint_dir, 'per_class_metrics.csv'), index=False)
+    per_class_df.to_csv(os.path.join(checkpoint_dir, 'per_class_metrics.csv'), index=False, encoding='utf-8')
     
     # Create a summary text report for quick reference
-    with open(os.path.join(checkpoint_dir, 'SUMMARY.txt'), 'w') as f:
+    with open(os.path.join(checkpoint_dir, 'SUMMARY.txt'), 'w', encoding='utf-8') as f:
         f.write("="*70 + "\n")
         f.write(f"ECG ARRHYTHMIA CLASSIFICATION - TRAINING SUMMARY\n")
         f.write("="*70 + "\n\n")
@@ -660,14 +894,25 @@ def train(args):
         f.write(f"Classes: {num_classes}\n")
         f.write(f"Train Records: {len(train_records)}\n")
         f.write(f"Val Records: {len(val_records)}\n")
-        f.write(f"Test Records: {len(test_records)}\n\n")
+        f.write(f"Test Records: {len(test_records)}\n")
+        f.write(f"Split Strategy: {split_mode.strip('_').replace('_', ' ').title()}\n")
+        if args.curated_val is not None and args.curated_test is not None:
+            f.write(f"Curated Validation Patients: {', '.join(val_records)}\n")
+            f.write(f"Curated Test Patients: {', '.join(test_records)}\n")
+            f.write(f"Note: Pure patient-wise split (clinically valid, no leakage)\n")
+        elif args.curated_test is not None:
+            f.write(f"Curated Test Patients: {', '.join(test_records)}\n")
+            f.write(f"Note: Test is patient-wise (valid), Train/Val are beat-pooled (balance)\n")
+        elif args.beat_wise:
+            f.write(f"WARNING: Beat-wise split has DATA LEAKAGE (not for clinical use)\n")
+        f.write("\n")
         
         f.write("-"*70 + "\n")
         f.write("RESULTS\n")
         f.write("-"*70 + "\n")
-        f.write(f"Best Val Accuracy: {best_val_acc:.2f}% (Epoch {best_epoch})\n")
-        f.write(f"Test Accuracy: {test_acc:.2f}%\n")
-        f.write(f"Test Loss: {test_loss:.4f}\n\n")
+        f.write(f"Best Validation Accuracy: {best_val_acc:.2f}% (Epoch {best_epoch})\n")
+        f.write(f"Final Test Accuracy: {test_acc:.2f}%\n")
+        f.write(f"Final Test Loss: {test_loss:.4f}\n\n")
         
         f.write("-"*70 + "\n")
         f.write("PER-CLASS PERFORMANCE (Test Set)\n")
@@ -711,7 +956,7 @@ def main():
                        help='Model architecture to use')
     
     # Data arguments
-    parser.add_argument('--data_dir', type=str, default='../data/mitdb',
+    parser.add_argument('--data_dir', type=str, default='../data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0',
                        help='Directory containing MIT-BIH data')
     parser.add_argument('--window_size', type=float, default=0.8,
                        help='Window size around R-peak in seconds')
@@ -725,6 +970,25 @@ def main():
                        help='Fraction of records for testing (default: 0.125)')
     parser.add_argument('--stratified', action='store_true',
                        help='Use stratified split to balance rare classes across train/val/test')
+    parser.add_argument('--beat_wise', action='store_true',
+                       help='WARNING: Use beat-wise split (DATA LEAKAGE! Not for publication/clinical use)')
+    parser.add_argument('--curated_test', nargs='+', type=str, default=None,
+                       help='HYBRID: Curated test patients (e.g., --curated_test 207 217). '
+                            'Test set is patient-wise (valid), train/val are beat-pooled (class balance)')
+    parser.add_argument('--curated_val', nargs='+', type=str, default=None,
+                       help='Specify validation patients (e.g., --curated_val 203 208). '
+                            'If both --curated_val and --curated_test are given: pure patient-wise split. '
+                            'If only --curated_val: val is isolated, train/test use remaining patients.')
+    
+    # Class imbalance handling
+    parser.add_argument('--class_weights', action='store_true',
+                       help='Use class weights to handle imbalanced data (recommended)')
+    parser.add_argument('--focal_loss', action='store_true',
+                       help='Use Focal Loss instead of CrossEntropyLoss (for severe imbalance)')
+    parser.add_argument('--focal_gamma', type=float, default=2.0,
+                       help='Gamma parameter for Focal Loss (default: 2.0)')
+    parser.add_argument('--oversample', action='store_true',
+                       help='Oversample minority classes in training data')
     
     # Training arguments
     parser.add_argument('--epochs', type=int, default=20,

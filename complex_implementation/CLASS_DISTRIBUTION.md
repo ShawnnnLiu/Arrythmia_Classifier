@@ -216,12 +216,116 @@ A: Stratification will try to distribute them, but with only 6 test records, som
 **Q: Does this affect training time?**
 A: Minimal - only adds ~1-2 seconds at the start for distribution analysis.
 
+## 🔬 Beat-Wise Split (For Prototyping Only!)
+
+### What is Beat-Wise Split?
+
+Instead of splitting patients, beat-wise split pools ALL beats from ALL patients, then randomly splits the beats:
+
+```python
+# Beat-wise (NOT recommended for production!)
+All 109,494 beats → shuffle → 75/12.5/12.5 split
+
+# Result: Same patient's beats in multiple splits
+Patient 100: some beats in train, some in val, some in test
+```
+
+### ⚠️ Critical Warnings
+
+**DO NOT USE for:**
+- ❌ Final model evaluation
+- ❌ Clinical validation
+- ❌ Publications / papers
+- ❌ FDA submissions
+- ❌ Real-world deployment
+
+**ONLY USE for:**
+- ✓ Quick prototyping
+- ✓ Debugging models
+- ✓ Establishing upper-bound performance
+- ✓ Teaching / learning
+
+### Why It Creates Data Leakage
+
+```python
+# Patient 100 has 2,000 beats with unique ECG morphology
+
+Beat-wise split assigns:
+  Train: Beats #1, #3, #5, ... (1,500 beats from Patient 100)
+  Test:  Beats #2, #4, #6, ... (500 beats from Patient 100)
+
+# Model learns Patient 100's unique patterns in training
+# Then "predicts" on more beats from SAME patient
+# This is artificially easy → inflated accuracy!
+```
+
+### Testing Beat-Wise Split
+
+```bash
+# Check distribution with beat-wise split
+python check_split_distribution.py --beat_wise
+
+# Compare: patient-wise vs beat-wise
+python check_split_distribution.py --stratified
+python check_split_distribution.py --beat_wise
+```
+
+### Training with Beat-Wise Split
+
+```bash
+# ⚠️ For prototyping ONLY!
+python train.py --beat_wise --epochs 20
+
+# Results will be MUCH better but INVALID for clinical use
+```
+
+### Expected Performance Difference
+
+**Patient-Wise (Correct):**
+- Test Accuracy: 82-85% ✅ Realistic
+- Rare Class F1: 0.30-0.50 ✅ Honest
+
+**Beat-Wise (Inflated):**
+- Test Accuracy: 95-98% 🎈 Too good to be true!
+- Rare Class F1: 0.80-0.90 🎈 Overly optimistic
+
+### When to Use Each
+
+| Use Case | Patient-Wise | Beat-Wise |
+|----------|--------------|-----------|
+| **Final results** | ✅ Always | ❌ Never |
+| **Clinical deployment** | ✅ Required | ❌ Invalid |
+| **Publications** | ✅ Standard | ❌ Rejected |
+| **Quick prototyping** | ⚠️ Slow | ✅ Fast |
+| **Model debugging** | ⚠️ Hard | ✅ Easy |
+| **Upper-bound performance** | ❌ Not applicable | ✅ Shows ceiling |
+
+### Proper Reporting
+
+If you use beat-wise for comparison:
+
+```markdown
+## Results
+
+### Patient-Wise Split (Primary - Clinically Valid)
+- Test Accuracy: 83.5%
+- Tests generalization to NEW patients
+- ✅ Suitable for clinical deployment
+
+### Beat-Wise Split (Supplementary - Data Leakage)
+- Test Accuracy: 96.2%
+- ⚠️ Includes data leakage (same patient in train/test)
+- ❌ NOT suitable for clinical use
+- Shows upper-bound performance if patient-specific tuning were possible
+```
+
 ## Summary
 
 ✅ **Use `--stratified` flag for fair class distribution**
 ✅ **Check distribution with `check_split_distribution.py`**
 ✅ **Verify all classes appear in test set**
-✅ **Report results using stratified split**
+✅ **Report results using patient-wise split**
+⚠️  **Use `--beat_wise` ONLY for prototyping, clearly mark as such**
 
 This ensures your model evaluation is fair and all arrhythmia types are properly tested!
 

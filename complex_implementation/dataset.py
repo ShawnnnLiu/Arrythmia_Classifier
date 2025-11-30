@@ -66,10 +66,15 @@ class BeatDataset(Dataset):
     
     def __init__(self, 
                  record_names: List[str],
-                 data_dir: str = 'data/mitdb',
+                 data_dir: str = '../data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0',
                  window_size: float = 0.8,
                  lead: int = 0,
-                 normalize: bool = True):
+                 normalize: bool = True,
+                 beat_wise_split: bool = False,
+                 split_name: str = 'train',
+                 train_ratio: float = 0.75,
+                 val_ratio: float = 0.125,
+                 random_seed: int = 42):
         """
         Initialize BeatDataset
         
@@ -85,12 +90,27 @@ class BeatDataset(Dataset):
             Which ECG lead to use (0 or 1)
         normalize : bool
             Whether to normalize each beat window to zero mean and unit variance
+        beat_wise_split : bool
+            If True, splits individual beats (not patients)
+        split_name : str
+            'train', 'val', or 'test' - used for beat-wise splitting
+        train_ratio : float
+            Fraction for training (beat-wise split only)
+        val_ratio : float
+            Fraction for validation (beat-wise split only)
+        random_seed : int
+            Random seed for beat-wise split reproducibility
         """
         self.record_names = record_names
         self.data_dir = data_dir
         self.window_size = window_size
         self.lead = lead
         self.normalize = normalize
+        self.beat_wise_split = beat_wise_split
+        self.split_name = split_name
+        self.train_ratio = train_ratio
+        self.val_ratio = val_ratio
+        self.random_seed = random_seed
         
         # Storage for beat windows and labels
         self.beats = []
@@ -99,6 +119,10 @@ class BeatDataset(Dataset):
         
         # Load all beats
         self._load_all_beats()
+        
+        # Apply beat-wise filtering if requested
+        if self.beat_wise_split:
+            self._apply_beat_wise_split()
         
         # Print dataset statistics
         self._print_statistics()
@@ -154,11 +178,57 @@ class BeatDataset(Dataset):
                 print(f"Warning: Error loading record {record_name}: {e}")
                 continue
     
+    def _apply_beat_wise_split(self):
+        """
+        Filter beats based on beat-wise split ratios
+        
+        WARNING: This creates data leakage! Use only for prototyping.
+        """
+        np.random.seed(self.random_seed)
+        
+        # Create indices for all beats
+        n_beats = len(self.beats)
+        indices = np.arange(n_beats)
+        np.random.shuffle(indices)
+        
+        # Calculate split points
+        train_end = int(n_beats * self.train_ratio)
+        val_end = train_end + int(n_beats * self.val_ratio)
+        
+        # Debug: print what we're doing
+        print(f"    [DEBUG] Split {self.split_name}: train_ratio={self.train_ratio}, val_ratio={self.val_ratio}")
+        print(f"    [DEBUG] n_beats={n_beats}, train_end={train_end}, val_end={val_end}")
+        print(f"    [DEBUG] indices shape: {indices.shape}, first 5: {indices[:5]}")
+        
+        # Select indices for this split
+        print(f"    [DEBUG] Checking split_name: '{self.split_name}' (type: {type(self.split_name)})")
+        if self.split_name == 'train':
+            selected_indices = indices[:train_end]
+            print(f"    [DEBUG] MATCHED TRAIN - Train slice: [:{train_end}] → {len(selected_indices)} indices")
+        elif self.split_name == 'val':
+            selected_indices = indices[train_end:val_end]
+            print(f"    [DEBUG] MATCHED VAL - Val slice: [{train_end}:{val_end}] → {len(selected_indices)} indices")
+        else:  # test
+            selected_indices = indices[val_end:]
+            print(f"    [DEBUG] MATCHED TEST - Test slice: [{val_end}:] → {len(selected_indices)} indices")
+        
+        # Filter beats, labels, and record_ids
+        self.beats = [self.beats[i] for i in selected_indices]
+        self.labels = [self.labels[i] for i in selected_indices]
+        self.record_ids = [self.record_ids[i] for i in selected_indices]
+        
+        print(f"  WARNING: Beat-wise {self.split_name} split: kept {len(self.beats):,} / {n_beats:,} beats")
+    
     def _print_statistics(self):
         """Print dataset statistics"""
-        print(f"\nDataset Statistics:")
+        split_indicator = f" ({self.split_name.upper()} split)" if self.beat_wise_split else ""
+        print(f"\nDataset Statistics{split_indicator}:")
         print(f"  Total beats: {len(self.beats)}")
         print(f"  Records: {len(self.record_names)}")
+        
+        if len(self.labels) == 0:
+            print("  No beats loaded!")
+            return
         
         # Count beats per class
         label_counts = Counter(self.labels)
@@ -198,12 +268,285 @@ class BeatDataset(Dataset):
         return len(CLASS_NAMES)
 
 
-def create_patient_splits(data_dir: str = 'data/mitdb',
+def create_beat_wise_splits(data_dir: str = '../data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0',
+                           train_ratio: float = 0.75,
+                           val_ratio: float = 0.125,
+                           test_ratio: float = 0.125,
+                           random_seed: int = 42) -> Tuple[List[str], List[str], List[str]]:
+    """
+    Create beat-wise train/val/test splits by pooling ALL beats then splitting
+    
+    ⚠️  WARNING: This creates DATA LEAKAGE! Same patient's beats appear in multiple splits.
+    ⚠️  Use ONLY for prototyping or to establish upper-bound performance.
+    ⚠️  NOT suitable for clinical validation or publication.
+    
+    For production/research, use create_patient_splits() instead!
+    
+    Parameters:
+    -----------
+    data_dir : str
+        Directory containing MIT-BIH data
+    train_ratio : float
+        Fraction of BEATS for training
+    val_ratio : float
+        Fraction of BEATS for validation
+    test_ratio : float
+        Fraction of BEATS for testing
+    random_seed : int
+        Random seed for reproducibility
+        
+    Returns:
+    --------
+    train_records : List[str]
+        ALL record names (for compatibility)
+    val_records : List[str]
+        ALL record names (for compatibility)
+    test_records : List[str]
+        ALL record names (for compatibility)
+        
+    Note: The actual split happens at the beat level in BeatDataset,
+          this function returns all records for all splits to enable beat-level splitting.
+    """
+    # Get all available records
+    files = os.listdir(data_dir)
+    all_records = sorted(set([f.split('.')[0] for f in files if f.endswith('.hea')]))
+    
+    print("\n" + "="*70)
+    print("WARNING: BEAT-WISE SPLIT ENABLED")
+    print("="*70)
+    print("This splits individual beats, NOT patients!")
+    print("Same patient's beats will appear in train/val/test.")
+    print("")
+    print("Consequences:")
+    print("  X Data leakage - model sees same patient in train & test")
+    print("  X Overly optimistic performance estimates")
+    print("  X NOT suitable for clinical validation")
+    print("  X NOT publishable in medical journals")
+    print("")
+    print("Use ONLY for:")
+    print("  + Quick prototyping")
+    print("  + Establishing upper-bound performance")
+    print("  + Debugging models")
+    print("="*70 + "\n")
+    
+    # Return all records for all splits
+    # The actual beat-level split will happen in the dataset loader
+    return all_records, all_records, all_records
+
+
+def create_curated_hybrid_splits(data_dir: str = '../data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0',
+                                  test_patients: List[str] = None,
+                                  train_ratio: float = 0.85,
+                                  val_ratio: float = 0.15,
+                                  random_seed: int = 42) -> Tuple[List[str], List[str], List[str]]:
+    """
+    Create HYBRID curated test split:
+    - Hold out specific patients for testing (pure patient-wise, no leakage)
+    - Pool beats from remaining patients for train/val (beat-level split for class balance)
+    
+    This approach balances:
+    ✅ Test generalization (patient-wise test set)
+    ✅ Class balance (beat-wise train/val split)
+    ⚠️  Train/val share patients (acceptable since val is just for tuning)
+    
+    Use cases:
+    - When rare classes cluster in specific patients
+    - When you need all classes represented in test set
+    - When test validity is critical but train/val leakage is acceptable
+    
+    Parameters:
+    -----------
+    data_dir : str
+        Directory containing MIT-BIH data
+    test_patients : List[str]
+        List of patient record IDs to hold out for testing (e.g., ['207', '217'])
+        If None, will suggest patients based on diversity analysis
+    train_ratio : float
+        Fraction of remaining BEATS for training (default: 0.85)
+    val_ratio : float
+        Fraction of remaining BEATS for validation (default: 0.15)
+    random_seed : int
+        Random seed for reproducibility
+        
+    Returns:
+    --------
+    train_records : List[str]
+        All non-test record names (beats will be pooled and split)
+    val_records : List[str]
+        All non-test record names (same as train, beats will be pooled)
+    test_records : List[str]
+        Held-out test patient record names (pure patient-wise)
+        
+    Example:
+    --------
+    >>> # Hold out patients 207 and 217 for testing
+    >>> train, val, test = create_curated_hybrid_splits(
+    ...     data_dir='data/mitdb',
+    ...     test_patients=['207', '217'],
+    ...     train_ratio=0.85,
+    ...     val_ratio=0.15
+    ... )
+    >>> # Now train and val will contain all other patients (beats pooled)
+    >>> # test will contain only patients 207 and 217 (patient-wise)
+    """
+    # Get all available records
+    files = os.listdir(data_dir)
+    all_records = sorted(set([f.split('.')[0] for f in files if f.endswith('.hea')]))
+    
+    # If no test patients specified, suggest some
+    if test_patients is None or len(test_patients) == 0:
+        print("\n" + "="*70)
+        print("ERROR: No test patients specified!")
+        print("="*70)
+        print("Please specify test patients using --curated_test argument.")
+        print("\nTo find diverse patients, run:")
+        print("  python analyze_patient_diversity.py")
+        print("\nExample:")
+        print("  python train.py --model simple_cnn --curated_test 207 217")
+        print("="*70 + "\n")
+        raise ValueError("Must specify test_patients for curated hybrid split")
+    
+    # Validate test patients exist
+    invalid_patients = [p for p in test_patients if p not in all_records]
+    if invalid_patients:
+        raise ValueError(f"Invalid test patients (not in dataset): {invalid_patients}")
+    
+    # Separate test patients from remaining patients
+    test_records = sorted(test_patients)
+    remaining_records = sorted([r for r in all_records if r not in test_patients])
+    
+    print("\n" + "="*70)
+    print("CURATED HYBRID SPLIT")
+    print("="*70)
+    print(f"Test patients (held out, patient-wise): {test_records}")
+    print(f"Remaining patients (will be beat-pooled): {len(remaining_records)} patients")
+    print("")
+    print("Strategy:")
+    print("  ✅ Test set: Pure patient-wise (no leakage)")
+    print("  ⚠️  Train/Val: Beat-wise split (shares patients for class balance)")
+    print("")
+    print("Why this works:")
+    print("  - Test results are valid (true generalization to new patients)")
+    print("  - Train/Val have better class balance (from beat pooling)")
+    print("  - Val is only used for tuning (acceptable to share patients)")
+    print("  - Final reported metric (test) is clinically valid ✅")
+    print("="*70 + "\n")
+    
+    # For train and val, return all remaining records
+    # The beat-level split will happen in BeatDataset
+    train_records = remaining_records
+    val_records = remaining_records
+    
+    print(f"Curated hybrid split:")
+    print(f"  Test (patient-wise):  {len(test_records)} patients")
+    print(f"  Train/Val (beat-wise): {len(remaining_records)} patients")
+    print(f"    - Training beats:   {train_ratio*100:.0f}% of pooled beats")
+    print(f"    - Validation beats: {val_ratio*100:.0f}% of pooled beats")
+    print(f"\n  Test records: {test_records}")
+    print(f"  Pooled records: {remaining_records[:5]}... (showing first 5)")
+    
+    return train_records, val_records, test_records
+
+
+def create_curated_patient_splits(data_dir: str = '../data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0',
+                                   val_patients: List[str] = None,
+                                   test_patients: List[str] = None,
+                                   random_seed: int = 42) -> Tuple[List[str], List[str], List[str]]:
+    """
+    Create PURE PATIENT-WISE split with manually specified val and test patients.
+    
+    This is the most rigorous approach:
+    ✅ Pure patient-wise (no data leakage anywhere)
+    ✅ Manually curated validation and test sets
+    ✅ Clinically valid for publications
+    ⚠️  May have class imbalance (depends on patient selection)
+    
+    Use cases:
+    - When you want complete control over which patients go where
+    - When you've identified diverse patients using analyze_patient_diversity.py
+    - For final publication-ready models
+    - When you need clinically valid results across all splits
+    
+    Parameters:
+    -----------
+    data_dir : str
+        Directory containing MIT-BIH data
+    val_patients : List[str]
+        List of patient record IDs for validation (e.g., ['203', '208', '213'])
+    test_patients : List[str]
+        List of patient record IDs for testing (e.g., ['215', '205', '210'])
+    random_seed : int
+        Random seed (not used, but kept for API consistency)
+        
+    Returns:
+    --------
+    train_records : List[str]
+        Training patient IDs (all remaining patients)
+    val_records : List[str]
+        Validation patient IDs (specified val_patients)
+    test_records : List[str]
+        Test patient IDs (specified test_patients)
+        
+    Examples:
+    ---------
+    >>> train, val, test = create_curated_patient_splits(
+    ...     data_dir='data/mitdb',
+    ...     val_patients=['203', '208', '213', '233', '104', '223'],
+    ...     test_patients=['215', '205', '210', '200', '214', '219']
+    ... )
+    >>> # val contains exactly the 6 specified patients
+    >>> # test contains exactly the 6 specified patients
+    >>> # train contains all remaining patients
+    """
+    # Get all available records
+    files = os.listdir(data_dir)
+    all_records = sorted(set([f.split('.')[0] for f in files if f.endswith('.hea')]))
+    
+    # Validate inputs
+    if val_patients is None or len(val_patients) == 0:
+        raise ValueError("Must specify val_patients for curated patient-wise split")
+    if test_patients is None or len(test_patients) == 0:
+        raise ValueError("Must specify test_patients for curated patient-wise split")
+    
+    # Check for overlap
+    overlap = set(val_patients) & set(test_patients)
+    if overlap:
+        raise ValueError(f"Patients cannot be in both val and test: {overlap}")
+    
+    # Validate all patients exist
+    invalid_val = [p for p in val_patients if p not in all_records]
+    if invalid_val:
+        raise ValueError(f"Invalid validation patients (not in dataset): {invalid_val}")
+    
+    invalid_test = [p for p in test_patients if p not in all_records]
+    if invalid_test:
+        raise ValueError(f"Invalid test patients (not in dataset): {invalid_test}")
+    
+    # Create splits
+    val_records = sorted(val_patients)
+    test_records = sorted(test_patients)
+    train_records = sorted([r for r in all_records if r not in val_patients and r not in test_patients])
+    
+    # Print summary
+    print(f"\nCurated patient-wise split:")
+    print(f"  Training patients:   {len(train_records)}")
+    print(f"  Validation patients: {len(val_records)}")
+    print(f"  Test patients:       {len(test_records)}")
+    print(f"  Total patients:      {len(all_records)}")
+    print(f"\n  Train records: {train_records[:5]}... (showing first 5)")
+    print(f"  Val records:   {val_records}")
+    print(f"  Test records:  {test_records}")
+    
+    return train_records, val_records, test_records
+
+
+def create_patient_splits(data_dir: str = '../data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0',
                          train_ratio: float = 0.75,
                          val_ratio: float = 0.125,
                          test_ratio: float = 0.125,
                          random_seed: int = 42,
-                         stratified: bool = True) -> Tuple[List[str], List[str], List[str]]:
+                         stratified: bool = True,
+                         beat_wise: bool = False) -> Tuple[List[str], List[str], List[str]]:
     """
     Create patient-wise train/val/test splits
     
@@ -224,6 +567,8 @@ def create_patient_splits(data_dir: str = 'data/mitdb',
         Random seed for reproducibility
     stratified : bool
         If True, attempts to balance class distribution across splits
+    beat_wise : bool
+        If True, splits beats instead of patients (⚠️ creates data leakage!)
         
     Returns:
     --------
@@ -234,6 +579,9 @@ def create_patient_splits(data_dir: str = 'data/mitdb',
     test_records : List[str]
         List of record names for testing
     """
+    # If beat-wise split requested, use different function
+    if beat_wise:
+        return create_beat_wise_splits(data_dir, train_ratio, val_ratio, test_ratio, random_seed)
     # Get all available records
     files = os.listdir(data_dir)
     all_records = sorted(set([f.split('.')[0] for f in files if f.endswith('.hea')]))
@@ -274,56 +622,104 @@ def create_patient_splits(data_dir: str = 'data/mitdb',
                 print(f"  Warning: Could not analyze record {record_name}: {e}")
                 record_class_counts[record_name] = Counter()
         
-        # For stratification, prioritize records with rare classes
-        # Compute a "rarity score" for each record based on rare classes
-        rare_classes = [3, 5]  # Fusion and Unknown are typically rare
+        # Greedy stratification: iteratively assign patients to splits
+        # Goal: balance ALL class counts across splits as much as possible
         
-        records_with_rare = []
-        records_without_rare = []
+        # Initialize split accumulators
+        split_class_counts = {
+            'train': Counter(),
+            'val': Counter(),
+            'test': Counter()
+        }
+        split_records = {
+            'train': [],
+            'val': [],
+            'test': []
+        }
+        target_counts = {
+            'train': int(len(all_records) * train_ratio),
+            'val': int(len(all_records) * val_ratio),
+            'test': len(all_records)  # Will fill remaining
+        }
         
-        for record_name in all_records:
-            counts = record_class_counts[record_name]
-            has_rare = any(counts.get(cls, 0) > 0 for cls in rare_classes)
-            if has_rare:
-                records_with_rare.append(record_name)
-            else:
-                records_without_rare.append(record_name)
+        # Sort records by total beats (larger records assigned first)
+        sorted_records = sorted(all_records, 
+                              key=lambda r: sum(record_class_counts[r].values()), 
+                              reverse=True)
         
-        # Shuffle both groups
-        np.random.shuffle(records_with_rare)
-        np.random.shuffle(records_without_rare)
+        for record_name in sorted_records:
+            # Determine which split needs this record most
+            # Prioritize splits that are under capacity and have lowest class representation
+            
+            best_split = None
+            best_score = float('inf')
+            
+            for split_name in ['train', 'val', 'test']:
+                # Skip if split is full
+                if len(split_records[split_name]) >= target_counts[split_name]:
+                    continue
+                
+                # Calculate imbalance score if we add this record to this split
+                # Score = sum of squared differences from ideal distribution per class
+                temp_counts = split_class_counts[split_name].copy()
+                temp_counts.update(record_class_counts[record_name])
+                
+                # Compute imbalance (variance across splits for each class)
+                imbalance = 0
+                for class_id in range(6):  # All 6 classes
+                    # How many of this class in each split if we add this record
+                    train_count = split_class_counts['train'][class_id]
+                    val_count = split_class_counts['val'][class_id]
+                    test_count = split_class_counts['test'][class_id]
+                    
+                    if split_name == 'train':
+                        train_count = temp_counts[class_id]
+                    elif split_name == 'val':
+                        val_count = temp_counts[class_id]
+                    else:
+                        test_count = temp_counts[class_id]
+                    
+                    # Ideal: proportional to split size
+                    total_class = train_count + val_count + test_count
+                    if total_class > 0:
+                        ideal_train = total_class * train_ratio
+                        ideal_val = total_class * val_ratio
+                        ideal_test = total_class * test_ratio
+                        
+                        # Squared differences
+                        imbalance += (train_count - ideal_train)**2
+                        imbalance += (val_count - ideal_val)**2
+                        imbalance += (test_count - ideal_test)**2
+                
+                if imbalance < best_score:
+                    best_score = imbalance
+                    best_split = split_name
+            
+            # Assign to best split (or train if all full)
+            if best_split is None:
+                best_split = 'train'
+            
+            split_records[best_split].append(record_name)
+            split_class_counts[best_split].update(record_class_counts[record_name])
         
-        # Distribute rare-class records across splits
-        n_rare = len(records_with_rare)
-        rare_train_end = int(n_rare * train_ratio)
-        rare_val_end = rare_train_end + int(n_rare * val_ratio)
+        train_records = split_records['train']
+        val_records = split_records['val']
+        test_records = split_records['test']
         
-        rare_train = records_with_rare[:rare_train_end]
-        rare_val = records_with_rare[rare_train_end:rare_val_end]
-        rare_test = records_with_rare[rare_val_end:]
-        
-        # Distribute common-class records
-        n_common = len(records_without_rare)
-        common_train_end = int(n_common * train_ratio)
-        common_val_end = common_train_end + int(n_common * val_ratio)
-        
-        common_train = records_without_rare[:common_train_end]
-        common_val = records_without_rare[common_train_end:common_val_end]
-        common_test = records_without_rare[common_val_end:]
-        
-        # Combine and shuffle
-        train_records = rare_train + common_train
-        val_records = rare_val + common_val
-        test_records = rare_test + common_test
-        
+        # Shuffle within each split
         np.random.shuffle(train_records)
         np.random.shuffle(val_records)
         np.random.shuffle(test_records)
         
-        print(f"  Records with rare classes: {len(records_with_rare)}")
-        print(f"    Train: {len(rare_train)}, Val: {len(rare_val)}, Test: {len(rare_test)}")
-        print(f"  Records with common classes: {len(records_without_rare)}")
-        print(f"    Train: {len(common_train)}, Val: {len(common_val)}, Test: {len(common_test)}")
+        # Print stratification results
+        print(f"\n  Stratified class distribution:")
+        print(f"  {'Class':<20} {'Train':>10} {'Val':>10} {'Test':>10}")
+        print(f"  {'-'*54}")
+        for class_id, class_name in enumerate(CLASS_NAMES):
+            train_count = split_class_counts['train'][class_id]
+            val_count = split_class_counts['val'][class_id]
+            test_count = split_class_counts['test'][class_id]
+            print(f"  {class_name:<20} {train_count:>10,} {val_count:>10,} {test_count:>10,}")
     
     print(f"\nPatient-wise split:")
     print(f"  Training:   {len(train_records)} records ({train_ratio*100:.0f}%)")
@@ -339,9 +735,15 @@ def create_patient_splits(data_dir: str = 'data/mitdb',
 def create_dataloaders(train_records: List[str],
                        val_records: List[str],
                        test_records: List[str],
-                       data_dir: str = 'data/mitdb',
+                       data_dir: str = '../data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0',
                        batch_size: int = 64,
                        num_workers: int = 4,
+                       return_train_dataset: bool = False,
+                       beat_wise_split: bool = False,
+                       hybrid_mode: bool = False,
+                       train_ratio: float = 0.75,
+                       val_ratio: float = 0.125,
+                       random_seed: int = 42,
                        **dataset_kwargs) -> Tuple:
     """
     Create PyTorch DataLoaders for train/val/test sets
@@ -360,6 +762,12 @@ def create_dataloaders(train_records: List[str],
         Batch size for DataLoader
     num_workers : int
         Number of worker processes for data loading
+    return_train_dataset : bool
+        If True, also returns the training dataset object
+    beat_wise_split : bool
+        If True, uses beat-wise splitting (data leakage!)
+    hybrid_mode : bool
+        If True, test is patient-wise but train/val are beat-wise (curated hybrid)
     **dataset_kwargs : dict
         Additional arguments to pass to BeatDataset
         
@@ -369,18 +777,49 @@ def create_dataloaders(train_records: List[str],
     val_loader : torch.utils.data.DataLoader
     test_loader : torch.utils.data.DataLoader
     num_classes : int
+    train_dataset : BeatDataset (optional, if return_train_dataset=True)
     """
     from torch.utils.data import DataLoader
     
+    # Determine beat_wise_split for each dataset
+    if hybrid_mode:
+        # HYBRID: train/val use beat-wise, test uses patient-wise
+        train_beat_wise = True
+        val_beat_wise = True
+        test_beat_wise = False
+    else:
+        # NORMAL: all use the same setting
+        train_beat_wise = beat_wise_split
+        val_beat_wise = beat_wise_split
+        test_beat_wise = beat_wise_split
+    
     # Create datasets
     print("\nCreating training dataset...")
-    train_dataset = BeatDataset(train_records, data_dir=data_dir, **dataset_kwargs)
+    train_dataset = BeatDataset(train_records, data_dir=data_dir, 
+                                beat_wise_split=train_beat_wise,
+                                split_name='train',
+                                train_ratio=train_ratio,
+                                val_ratio=val_ratio,
+                                random_seed=random_seed,
+                                **dataset_kwargs)
     
     print("\nCreating validation dataset...")
-    val_dataset = BeatDataset(val_records, data_dir=data_dir, **dataset_kwargs)
+    val_dataset = BeatDataset(val_records, data_dir=data_dir,
+                             beat_wise_split=val_beat_wise,
+                             split_name='val',
+                             train_ratio=train_ratio,
+                             val_ratio=val_ratio,
+                             random_seed=random_seed,
+                             **dataset_kwargs)
     
     print("\nCreating test dataset...")
-    test_dataset = BeatDataset(test_records, data_dir=data_dir, **dataset_kwargs)
+    test_dataset = BeatDataset(test_records, data_dir=data_dir,
+                              beat_wise_split=test_beat_wise,
+                              split_name='test',
+                              train_ratio=train_ratio,
+                              val_ratio=val_ratio,
+                              random_seed=random_seed,
+                              **dataset_kwargs)
     
     # Create dataloaders
     train_loader = DataLoader(
@@ -409,7 +848,10 @@ def create_dataloaders(train_records: List[str],
     
     num_classes = train_dataset.get_num_classes()
     
-    return train_loader, val_loader, test_loader, num_classes
+    if return_train_dataset:
+        return train_loader, val_loader, test_loader, num_classes, train_dataset
+    else:
+        return train_loader, val_loader, test_loader, num_classes
 
 
 # Example usage
