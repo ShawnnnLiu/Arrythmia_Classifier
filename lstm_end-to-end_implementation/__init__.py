@@ -50,13 +50,11 @@ __version__ = '1.0.0'
 
 # Import Dataset Utilities
 from .dataset import (
-    RhythmDataset,
+    BeatDataset,
     create_patient_splits,
-    create_segment_wise_splits,
     create_dataloaders,
     CLASS_NAMES,
-    RHYTHM_CLASS_MAPPING,
-    RHYTHM_CLASS_MAPPING_SIMPLE
+    BEAT_CLASS_MAPPING
 )
 
 # Import LSTM Models
