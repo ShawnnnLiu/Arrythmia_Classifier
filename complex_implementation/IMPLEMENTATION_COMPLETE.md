@@ -373,3 +373,8 @@ python train.py --model lstm_autoencoder --epochs 50  # Train!
 
 Enjoy your new LSTM autoencoder! 🚀🔬📊
 
+
+
+
+
+

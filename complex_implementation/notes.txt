@@ -1,0 +1,74 @@
+# CS184A Arrhythmia Classifier Notes
+
+## Experimental Results: Data Split Methods Comparison
+
+### Methodology
+Trained SimpleBeatCNN model on MIT-BIH Arrhythmia Database (48 patients, 109,445 beats) using three different data splitting strategies to evaluate impact on classification performance.
+
+### Results Summary
+
+| Method | Split Type | Test Acc | Macro F1 | Notes |
+|--------|-----------|----------|----------|-------|
+| Baseline | Patient-wise random | 83.88% | 0.3732 | 2 classes missing from test |
+| Stratified | Patient-wise stratified | 90.03% | 0.4110 | 2 classes missing from test |
+| Beat-wise | Beat-wise pooled | **98.36%** | **0.7540** | ⚠️ Data leakage present |
+
+### Detailed Performance by Class
+
+**Baseline (Patient-wise Random):**
+- Normal: F1=0.8958 (9,608 samples)
+- Supraventricular: F1=0.1048 (204 samples)
+- Ventricular: F1=0.2594 (631 samples)
+- Fusion: F1=0.0000 (0 samples) ❌
+- Paced: F1=0.9791 (2,077 samples)
+- Unknown: F1=0.0000 (0 samples) ❌
+
+**Patient-wise Stratified:**
+- Normal: F1=0.9399 (13,155 samples)
+- Supraventricular: F1=0.0000 (284 samples)
+- Ventricular: F1=0.5451 (732 samples)
+- Fusion: F1=0.0000 (368 samples) ❌
+- Paced: F1=0.9812 (2,083 samples)
+- Unknown: F1=0.0000 (4 samples) ❌
+
+**Beat-wise Stratified:**
+- Normal: F1=0.9909 (11,345 samples)
+- Supraventricular: F1=0.7906 (328 samples) ✓
+- Ventricular: F1=0.9590 (889 samples) ✓
+- Fusion: F1=0.7882 (100 samples) ✓
+- Paced: F1=0.9951 (1,015 samples) ✓
+- Unknown: F1=0.0000 (5 samples)
+
+---
+
+## ⚠️ CRITICAL WARNING: Misinterpretation of Results
+
+### **INCORRECT Interpretation** (Do NOT Use!)
+~~"Beat-wise pooling provides incredible generalizability as it finds common features across abnormal heartbeats."~~
+
+### **CORRECT Interpretation**
+
+The beat-wise split results are **ARTIFICIALLY INFLATED** due to **data leakage**, NOT better generalizability.
+
+#### What Actually Happened:
+
+**Beat-wise Split (98.36% test accuracy):**
+
+
+python train.py --model simple_cnn \
+  --curated_val 203 208 213 233 104 223 \
+  --curated_test 215 205 210 200 214 219 \
+  --epochs 20
+
+Call this to get inter-patient split with most diverse splits\
+
+
+python train.py --model simple_cnn \
+  --curated_val 203 208 213 233 223 200 \
+  --curated_test 215 205 210 214 104 219 \
+  --class_weights --epochs 20
+
+python train.py --model simple_cnn \
+  --curated_val 203 208 213 233 104 223 \
+  --curated_test 215 205 210 200 214 219 \
+  --class_weights --epochs 20
