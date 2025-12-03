@@ -13,8 +13,12 @@ from pathlib import Path
 import argparse
 import numpy as np
 
+# Get project root directory (parent of training_results)
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
 
-def load_all_results(checkpoint_base_dir='complex_implementation/checkpoints'):
+
+def load_all_results(checkpoint_base_dir=None):
     """
     Load results from all training runs
     
@@ -24,7 +28,15 @@ def load_all_results(checkpoint_base_dir='complex_implementation/checkpoints'):
         List of result summaries from all runs
     """
     results = []
-    checkpoint_path = Path(checkpoint_base_dir)
+    
+    # Use default path relative to project root if not specified
+    if checkpoint_base_dir is None:
+        checkpoint_path = PROJECT_ROOT / 'complex_implementation' / 'checkpoints'
+    else:
+        checkpoint_path = Path(checkpoint_base_dir)
+        # If relative path, make it relative to project root
+        if not checkpoint_path.is_absolute():
+            checkpoint_path = PROJECT_ROOT / checkpoint_path
     
     if not checkpoint_path.exists():
         print(f"Warning: {checkpoint_base_dir} does not exist")
@@ -67,11 +79,15 @@ def create_comparison_table(results):
     return df
 
 
-def plot_model_comparison(results, save_path='training_results/model_comparison.png'):
+def plot_model_comparison(results, save_path=None):
     """Create comparison plots for all models"""
     if not results:
         print("No results to plot")
         return
+    
+    # Use default path relative to project root if not specified
+    if save_path is None:
+        save_path = str(PROJECT_ROOT / 'training_results' / 'model_comparison.png')
     
     # Set style
     sns.set_style("whitegrid")
@@ -161,10 +177,14 @@ def plot_model_comparison(results, save_path='training_results/model_comparison.
     plt.close()
 
 
-def generate_latex_table(df, save_path='training_results/comparison_table.tex'):
+def generate_latex_table(df, save_path=None):
     """Generate a LaTeX table for academic papers/presentations"""
     if df is None or df.empty:
         return
+    
+    # Use default path relative to project root if not specified
+    if save_path is None:
+        save_path = str(PROJECT_ROOT / 'training_results' / 'comparison_table.tex')
     
     # Select key columns
     table_df = df[['Model', 'Parameters', 'Test_Acc_%', 'Val_Acc_%', 'Training_Time']]
@@ -183,11 +203,11 @@ def generate_latex_table(df, save_path='training_results/comparison_table.tex'):
 def main():
     parser = argparse.ArgumentParser(description='Compare trained ECG models')
     parser.add_argument('--checkpoint_dir', type=str, 
-                       default='complex_implementation/checkpoints',
-                       help='Directory containing model checkpoints')
+                       default=None,
+                       help='Directory containing model checkpoints (default: complex_implementation/checkpoints)')
     parser.add_argument('--output_dir', type=str,
-                       default='training_results',
-                       help='Directory to save comparison results')
+                       default=None,
+                       help='Directory to save comparison results (default: training_results)')
     
     args = parser.parse_args()
     
@@ -195,7 +215,7 @@ def main():
     print("ECG MODEL COMPARISON TOOL")
     print("="*70)
     
-    # Load all results
+    # Load all results (uses project root defaults if None)
     results = load_all_results(args.checkpoint_dir)
     
     if not results:
@@ -211,7 +231,12 @@ def main():
     print("\n", df.to_string(index=False))
     
     # Save comparison table
-    output_path = Path(args.output_dir)
+    if args.output_dir is None:
+        output_path = PROJECT_ROOT / 'training_results'
+    else:
+        output_path = Path(args.output_dir)
+        if not output_path.is_absolute():
+            output_path = PROJECT_ROOT / output_path
     output_path.mkdir(parents=True, exist_ok=True)
     
     df.to_csv(output_path / 'model_comparison.csv', index=False)

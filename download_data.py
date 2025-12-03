@@ -6,14 +6,18 @@ import os
 import wfdb
 from tqdm import tqdm
 
-def download_mitdb_dataset(output_dir='data/mitdb'):
+def download_mitdb_dataset(output_dir='data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0'):
     """
     Download the MIT-BIH Arrhythmia Database
+    
+    Downloads to the same folder structure used by PhysioNet's direct download,
+    ensuring compatibility with all data loading scripts in this project.
     
     Parameters:
     -----------
     output_dir : str
         Directory where data will be saved
+        Default matches PhysioNet's folder structure for compatibility
     """
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
