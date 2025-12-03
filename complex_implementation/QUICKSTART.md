@@ -4,12 +4,14 @@ This guide will get you training models in under 5 minutes.
 
 ## Step 1: Ensure Data is Downloaded
 
-Make sure you have MIT-BIH data in `data/mitdb/`:
+Make sure you have MIT-BIH data downloaded:
 
 ```bash
 # If not already downloaded:
 python download_data.py
 ```
+
+Data will be saved to: `data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0/`
 
 ## Step 2: Train Your First Model
 

@@ -7,7 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from typing import Tuple, Optional
 
-def load_ecg_record(record_name: str, data_dir: str = 'data/mitdb') -> Tuple:
+def load_ecg_record(record_name: str, data_dir: str = 'data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0') -> Tuple:
     """
     Load an ECG record from the local MIT-BIH database
     
@@ -40,7 +40,7 @@ def load_ecg_record(record_name: str, data_dir: str = 'data/mitdb') -> Tuple:
 
 
 def visualize_ecg(record_name: str, 
-                  data_dir: str = 'data/mitdb',
+                  data_dir: str = 'data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0',
                   start_sec: float = 0,
                   duration_sec: float = 10,
                   show_annotations: bool = True):
@@ -104,7 +104,7 @@ def visualize_ecg(record_name: str,
     plt.show()
 
 
-def get_annotation_statistics(record_name: str, data_dir: str = 'data/mitdb'):
+def get_annotation_statistics(record_name: str, data_dir: str = 'data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0'):
     """
     Get statistics about beat annotations in a record
     
@@ -154,7 +154,7 @@ def get_annotation_statistics(record_name: str, data_dir: str = 'data/mitdb'):
         print(f"  {symbol}: {count:5d} ({percentage:5.2f}%) - {description}")
 
 
-def list_available_records(data_dir: str = 'data/mitdb'):
+def list_available_records(data_dir: str = 'data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0'):
     """
     List all available records in the database
     

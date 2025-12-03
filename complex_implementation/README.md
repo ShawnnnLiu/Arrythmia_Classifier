@@ -126,7 +126,7 @@ python -m complex_implementation.train \
 | `--model` | `simple_cnn` | Model architecture (`simple_cnn`, `complex_cnn`, or `lstm_autoencoder`) |
 | `--alpha` | `1.0` | Reconstruction loss weight (LSTM autoencoder only) |
 | `--beta` | `1.0` | Classification loss weight (LSTM autoencoder only) |
-| `--data_dir` | `data/mitdb` | Directory containing MIT-BIH data |
+| `--data_dir` | (auto-detected) | Directory containing MIT-BIH data |
 | `--window_size` | `0.8` | Window size around R-peak in seconds |
 | `--lead` | `0` | Which ECG lead to use (0 or 1) |
 | `--epochs` | `50` | Number of training epochs |
