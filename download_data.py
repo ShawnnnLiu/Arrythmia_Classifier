@@ -1,5 +1,11 @@
 """
 Script to download MIT-BIH Arrhythmia Database from PhysioNet
+
+This script downloads the MIT-BIH Arrhythmia Database to the directory structure
+expected by all source code in this project:
+    data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0/
+
+This matches the structure used by dataset.py, load_ecg_data.py, and other modules.
 """
 
 import os
