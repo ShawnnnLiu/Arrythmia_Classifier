@@ -8,14 +8,28 @@ the overall dataset distribution.
 """
 
 import os
+import sys
 import numpy as np
 import wfdb
 from collections import Counter
 from itertools import combinations
+
+# Ensure src/ is on sys.path so we can import dataset
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+
 from dataset import BEAT_CLASS_MAPPING, CLASS_NAMES
 
 
-def load_patient_class_counts(data_dir='../data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0'):
+# Default MIT-BIH data directory – resolved relative to this script's location
+# so it works regardless of which directory you run from.
+DEFAULT_DATA_DIR = os.path.join(
+    SCRIPT_DIR, "..", "data", "mit-bih-arrhythmia-database-1.0.0", "mit-bih-arrhythmia-database-1.0.0"
+)
+
+
+def load_patient_class_counts(data_dir: str = DEFAULT_DATA_DIR):
     """Load class distribution for each patient"""
     files = os.listdir(data_dir)
     all_records = sorted(set([f.split('.')[0] for f in files if f.endswith('.hea')]))
@@ -300,7 +314,43 @@ def print_split_details(split_idx, val_patients, test_patients, score,
 
 
 def main():
-    data_dir = '../data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0'
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Search for an optimal curated patient-wise val/test split.")
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        default=DEFAULT_DATA_DIR,
+        help="Directory containing MIT-BIH data "
+             "(default: ../data/mit-bih-arrhythmia-database-1.0.0/mit-bih-arrhythmia-database-1.0.0)",
+    )
+    parser.add_argument(
+        "--num_val",
+        type=int,
+        default=6,
+        help="Number of validation patients (default: 6)",
+    )
+    parser.add_argument(
+        "--num_test",
+        type=int,
+        default=6,
+        help="Number of test patients (default: 6)",
+    )
+    parser.add_argument(
+        "--top_n_candidates",
+        type=int,
+        default=24,
+        help="How many of the most diverse patients to consider when searching (default: 24)",
+    )
+    parser.add_argument(
+        "--target_val_test_ratio",
+        type=float,
+        default=0.25,
+        help="Target fraction of total beats allocated to val+test together (default: 0.25 → 12.5%+12.5%)",
+    )
+
+    args = parser.parse_args()
+    data_dir = args.data_dir
     
     print("Loading patient data...")
     patient_data, overall_counts = load_patient_class_counts(data_dir)
@@ -310,11 +360,12 @@ def main():
     
     # Find optimal split
     best_splits, overall_dist, total_beats = find_optimal_split(
-        patient_data, overall_counts,
-        target_val_test_ratio=0.25,  # 25% of data for val+test
-        num_val=6,
-        num_test=6,
-        top_n_candidates=24  # Consider more patients to find better balance
+        patient_data,
+        overall_counts,
+        target_val_test_ratio=args.target_val_test_ratio,
+        num_val=args.num_val,
+        num_test=args.num_test,
+        top_n_candidates=args.top_n_candidates,
     )
     
     # Print top 5 results (or all if fewer than 5)
@@ -340,12 +391,12 @@ def main():
     print(f"{'='*80}")
     
     val_patients, test_patients, _, _, _, _, _ = best_splits[0]
-    val_str = ' '.join(sorted(val_patients))
-    test_str = ' '.join(sorted(test_patients))
+    val_str = " ".join(sorted(val_patients))
+    test_str = " ".join(sorted(test_patients))
     
-    print(f"\npython train.py --model simple_cnn `")
-    print(f"  --curated_val {val_str} `")
-    print(f"  --curated_test {test_str} `")
+    print(f"\npython train.py --model simple_cnn \\")
+    print(f"  --curated_val {val_str} \\")
+    print(f"  --curated_test {test_str} \\")
     print(f"  --class_weights --epochs 20")
     
     print(f"\n{'='*80}\n")
@@ -353,4 +404,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
